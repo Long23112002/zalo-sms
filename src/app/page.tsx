@@ -1,103 +1,345 @@
-import Image from "next/image";
+'use client';
+
+import { useState, useEffect } from 'react';
+import AuthForm from '@/components/AuthForm';
+import ZaloConfigManager from '@/components/ZaloConfigManager';
+import MessageForm from '@/components/MessageForm';
+import ResultDisplay from '@/components/ResultDisplay';
+import UserDataManager from '@/components/UserDataManager';
+
+interface ZaloConfig {
+  _id: string;
+  name: string;
+  cookie: string;
+  imei: string;
+  userAgent: string;
+  proxy?: string;
+}
+
+interface Template {
+  _id: string;
+  name: string;
+  content: string;
+  variables: string[];
+}
+
+interface UserData {
+  _id: string;
+  phone: string;
+  xxx?: string;
+  yyy?: string;
+  sdt?: string;
+  ttt?: string;
+  zzz?: string;
+  www?: string;
+  uuu?: string;
+  vvv?: string;
+  customFields?: Record<string, string>;
+}
+
+interface MessageResult {
+  phone: string;
+  uid: string;
+  userName: string;
+  messageId: number | null;
+  success: boolean;
+  error?: string;
+  timestamp: string;
+}
 
 export default function Home() {
-  return (
-    <div className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="font-mono list-inside list-decimal text-sm/6 text-center sm:text-left">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] font-mono font-semibold px-1 py-0.5 rounded">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+  const [accessToken, setAccessToken] = useState<string>('');
+  const [refreshToken, setRefreshToken] = useState<string>('');
+  const [mounted, setMounted] = useState(false);
+  const [activeTab, setActiveTab] = useState<'config' | 'message'>('config');
+  const [activeZaloConfig, setActiveZaloConfig] = useState<ZaloConfig | null>(null);
+  const [messageResults, setMessageResults] = useState<MessageResult[]>([]);
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+  useEffect(() => {
+    setMounted(true);
+    
+    // Kiểm tra token từ localStorage
+    const storedAccessToken = localStorage.getItem('accessToken');
+    const storedRefreshToken = localStorage.getItem('refreshToken');
+    
+    if (storedAccessToken && storedRefreshToken) {
+      setAccessToken(storedAccessToken);
+      setRefreshToken(storedRefreshToken);
+    }
+  }, []);
+
+  const handleAuthSuccess = (data: { user: any; tokens: any }) => {
+    setAccessToken(data.tokens.accessToken);
+    setRefreshToken(data.tokens.refreshToken);
+    localStorage.setItem('accessToken', data.tokens.accessToken);
+    localStorage.setItem('refreshToken', data.tokens.refreshToken);
+  };
+
+  const handleLogout = () => {
+    setAccessToken('');
+    setRefreshToken('');
+    setActiveZaloConfig(null);
+    setMessageResults([]);
+    localStorage.removeItem('accessToken');
+    localStorage.removeItem('refreshToken');
+  };
+
+  const handleZaloLogin = (config: ZaloConfig) => {
+    setActiveZaloConfig(config);
+    setActiveTab('message');
+  };
+
+  const handleSendMessage = async (data: {
+    recipients: { phone: string; message: string }[];
+    delay: number;
+    activeZaloConfig: ZaloConfig;
+  }) => {
+    const results: MessageResult[] = [];
+    
+    for (let i = 0; i < data.recipients.length; i++) {
+      const phone = data.recipients[i].phone;
+      const personalizedMessage = data.recipients[i].message;
+      
+      try {
+        // Tìm UID của user qua số điện thoại
+        const findUserResponse = await fetch('/api/zalo/find-user', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            phoneNumber: phone,
+            cookie: data.activeZaloConfig.cookie,
+            imei: data.activeZaloConfig.imei,
+            userAgent: data.activeZaloConfig.userAgent,
+            proxy: data.activeZaloConfig.proxy
+          })
+        });
+
+        if (!findUserResponse.ok) {
+          const errorData = await findUserResponse.json();
+          results.push({
+            phone,
+            uid: '',
+            userName: '',
+            messageId: null,
+            success: false,
+            error: `Không tìm thấy user: ${errorData.error}`,
+            timestamp: new Date().toISOString()
+          });
+          continue;
+        }
+
+        const userData = await findUserResponse.json();
+        const uid = userData.user.uid;
+        const userName = userData.user.display_name || userData.user.zalo_name || 'Unknown';
+
+        // Gửi tin nhắn
+        const sendMessageResponse = await fetch('/api/zalo/send-message', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            message: personalizedMessage,
+            recipients: [uid],
+            cookie: data.activeZaloConfig.cookie,
+            imei: data.activeZaloConfig.imei,
+            userAgent: data.activeZaloConfig.userAgent,
+            proxy: data.activeZaloConfig.proxy,
+            delay: data.delay,
+            sessionId: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}`,
+            templateId: undefined,
+            userId: 'me'
+          })
+        });
+
+        if (sendMessageResponse.ok) {
+          const messageData = await sendMessageResponse.json();
+          results.push({
+            phone,
+            uid,
+            userName,
+            messageId: messageData.messageId || null,
+            success: true,
+            timestamp: new Date().toISOString()
+          });
+        } else {
+          const errorData = await sendMessageResponse.json();
+          results.push({
+            phone,
+            uid,
+            userName,
+            messageId: null,
+            success: false,
+            error: `Gửi tin nhắn thất bại: ${errorData.error}`,
+            timestamp: new Date().toISOString()
+          });
+        }
+
+        // Delay giữa các tin nhắn
+        if (i < data.recipients.length - 1) {
+          await new Promise(resolve => setTimeout(resolve, data.delay * 1000));
+        }
+      } catch (error: any) {
+        results.push({
+          phone,
+          uid: '',
+          userName: '',
+          messageId: null,
+          success: false,
+          error: `Lỗi xử lý: ${error.message}`,
+          timestamp: new Date().toISOString()
+        });
+      }
+    }
+
+    setMessageResults(results);
+  };
+
+  const handlePhoneClick = (phone: string, data: UserData) => {
+    // Có thể mở modal preview hoặc thực hiện hành động khác
+    console.log('Phone clicked:', phone, data);
+  };
+
+  if (!mounted) return null;
+
+  if (!accessToken) {
+    return <AuthForm onAuthSuccess={handleAuthSuccess} />;
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      {/* Header */}
+      <header className="bg-white shadow-sm border-b border-gray-200">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex justify-between items-center h-16">
+            <h1 className="text-2xl font-bold text-gray-900">Zalo SMS</h1>
+            <button
+              onClick={handleLogout}
+              className="px-4 py-2 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
+            >
+              Đăng xuất
+            </button>
+          </div>
         </div>
+      </header>
+
+      {/* Navigation Tabs */}
+      <nav className="bg-white border-b border-gray-200">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex space-x-8">
+            <button
+              onClick={() => setActiveTab('config')}
+              className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors ${
+                activeTab === 'config'
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              }`}
+            >
+              Cấu hình Zalo
+            </button>
+            <button
+              onClick={() => setActiveTab('message')}
+              disabled={!activeZaloConfig}
+              className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors ${
+                activeTab === 'message'
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              } ${!activeZaloConfig ? 'opacity-50 cursor-not-allowed' : ''}`}
+            >
+              Gửi tin nhắn
+              {activeZaloConfig && (
+                <span className="ml-2 text-xs text-blue-600">
+                  ({activeZaloConfig.name})
+                </span>
+              )}
+            </button>
+          </div>
+        </div>
+      </nav>
+
+      {/* Main Content */}
+      <main className="py-8">
+        {activeTab === 'config' && (
+          <ZaloConfigManager
+            accessToken={accessToken}
+            onZaloLogin={handleZaloLogin}
+          />
+        )}
+        
+        {activeTab === 'message' && activeZaloConfig && (
+          <div className="space-y-8">
+            <MessageForm
+              onSend={async ({ recipients, delay, activeZaloConfig, sessionId, onSuccess, onFail, onDone }) => {
+                if (sessionId) {
+                  try { localStorage.removeItem(`cancel:${sessionId}`); } catch {}
+                }
+                // Lặp qua recipients và gọi API theo từng người để có thể cập nhật realtime
+                for (let i = 0; i < recipients.length; i++) {
+                  const phone = recipients[i].phone;
+                  const personalizedMessage = recipients[i].message;
+                  // check cancel trước mỗi lượt
+                  if (sessionId && typeof window !== 'undefined') {
+                    try {
+                      if (localStorage.getItem(`cancel:${sessionId}`) === '1') {
+                        onDone && onDone();
+                        return;
+                      }
+                    } catch {}
+                  }
+                  try {
+                    const findUserResponse = await fetch('/api/zalo/find-user', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ phoneNumber: phone, cookie: activeZaloConfig.cookie, imei: activeZaloConfig.imei, userAgent: activeZaloConfig.userAgent, proxy: activeZaloConfig.proxy })
+                    });
+                    if (!findUserResponse.ok) {
+                      onFail && onFail(phone);
+                    } else {
+                      const userData = await findUserResponse.json();
+                      const uid = userData.user.uid;
+                      const sendMessageResponse = await fetch('/api/zalo/send-message', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ message: personalizedMessage, recipients: [uid], cookie: activeZaloConfig.cookie, imei: activeZaloConfig.imei, userAgent: activeZaloConfig.userAgent, proxy: activeZaloConfig.proxy, delay, sessionId, templateId: undefined, userId: 'me' })
+                      });
+                      if (sendMessageResponse.ok) {
+                        onSuccess && onSuccess(phone);
+                      } else {
+                        onFail && onFail(phone);
+                      }
+                    }
+                  } catch {
+                    onFail && onFail(phone);
+                  }
+                  if (i < recipients.length - 1) {
+                    // nếu đã bấm dừng, thoát trước khi chờ delay
+                    if (sessionId && typeof window !== 'undefined') {
+                      try {
+                        if (localStorage.getItem(`cancel:${sessionId}`) === '1') {
+                          onDone && onDone();
+                          return;
+                        }
+                      } catch {}
+                    }
+                    await new Promise(r => setTimeout(r, delay * 1000));
+                  }
+                }
+                if (sessionId) {
+                  try { localStorage.removeItem(`cancel:${sessionId}`); } catch {}
+                }
+                onDone && onDone();
+              }}
+              activeZaloConfig={activeZaloConfig}
+            />
+            
+            {messageResults.length > 0 && (
+              <ResultDisplay results={messageResults} />
+            )}
+          </div>
+        )}
       </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
     </div>
   );
 }
