@@ -189,15 +189,13 @@ export default function UserDataManager({ accessToken, onPhoneClick }: UserDataM
       const data = userDataList.find(d => d.phone === selectedPhone);
       if (data) {
         let content = template.content;
-        
-        // Thay thế các biến
         const variables = ['xxx', 'yyy', 'sdt', 'ttt', 'zzz', 'www', 'uuu', 'vvv'];
         variables.forEach(variable => {
-          const value = data[variable as keyof UserData] || '';
+          const raw: any = (data as any)[variable];
+          const value: string = typeof raw === 'string' ? raw : '';
           const regex = new RegExp(`\\b${variable}\\b`, 'g');
           content = content.replace(regex, value);
         });
-        
         setPreviewContent(content);
       }
     }

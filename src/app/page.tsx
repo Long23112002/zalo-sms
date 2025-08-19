@@ -5,7 +5,6 @@ import AuthForm from '@/components/AuthForm';
 import ZaloConfigManager from '@/components/ZaloConfigManager';
 import MessageForm from '@/components/MessageForm';
 import ResultDisplay from '@/components/ResultDisplay';
-import UserDataManager from '@/components/UserDataManager';
 
 interface ZaloConfig {
   _id: string;
