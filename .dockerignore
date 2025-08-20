@@ -1,0 +1,15 @@
+node_modules
+npm-debug.log
+.next/cache
+.next/static
+.git
+.gitignore
+.vscode
+.vercel
+.env*
+Dockerfile*
+docker-compose*.yml
+tmp/
+out
+
+

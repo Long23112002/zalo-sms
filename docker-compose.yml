@@ -1,0 +1,23 @@
+services:
+  web:
+    build: .
+    container_name: zalo-sms-web
+    ports:
+      - "6391:3000"
+    environment:
+      - NODE_ENV=development
+      - NEXT_TELEMETRY_DISABLED=1
+      - MONGODB_URI=mongodb+srv://longjava2024:Java2024%40%40@cluster0.cb22hdu.mongodb.net/zalo?retryWrites=true&w=majority&appName=Cluster0
+      - PORT=3000
+      - JWT_SECRET=6b4f91e0b7a94663b1c3d8ff5a64a4e6d57f9c772d02c63128de64f7a05a917b
+      - JWT_REFRESH_SECRET=6b4f91e0b7a94663b1c3d8ff5a64a4e6d57f9c772d02c63128de64f7a05a917b
+      - ACCESS_TOKEN_EXPIRES=1d
+      - REFRESH_TOKEN_EXPIRES=7d
+      - NEXT_PUBLIC_API_BASE_URL=http://localhost:3000
+    volumes:
+      - ./tmp:/app/tmp
+
+volumes:
+  mongo-data:
+
+

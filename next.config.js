@@ -1,3 +1,5 @@
+const path = require('path');
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   webpack: (config, { isServer }) => {
@@ -17,6 +19,12 @@ const nextConfig = {
         os: false,
       };
     }
+
+    // Alias '@' -> 'src' to support imports like '@/components/...'
+    config.resolve.alias = {
+      ...(config.resolve.alias || {}),
+      '@': path.resolve(process.cwd(), 'src'),
+    };
 
     return config;
   }
