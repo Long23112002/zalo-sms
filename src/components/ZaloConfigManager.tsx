@@ -54,6 +54,8 @@ export default function ZaloConfigManager({ accessToken, onZaloLogin, onQRLoginS
   // Sub tabs: cấu hình | QR
   const [activeSubTab, setActiveSubTab] = useState<'config' | 'qr'>('config');
 
+
+
   useEffect(() => {
     setMounted(true);
     fetchConfigs();
@@ -96,6 +98,8 @@ export default function ZaloConfigManager({ accessToken, onZaloLogin, onQRLoginS
       return cookie;
     }
   };
+
+
 
   const fetchConfigs = async () => {
     try {
@@ -706,6 +710,8 @@ export default function ZaloConfigManager({ accessToken, onZaloLogin, onQRLoginS
         )}
         <div className="mt-3 text-sm text-gray-600">Session: {qrSession}</div>
       </Modal>
+
+
     </div>
   );
 }

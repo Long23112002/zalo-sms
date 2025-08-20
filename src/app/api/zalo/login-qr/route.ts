@@ -37,7 +37,7 @@ interface QRLoginSession {
   ok?: boolean;
   error?: string;
   cookiePath?: string;
-  cookieFilePath?: string; // Thêm đường dẫn file cookie
+
   accountPath?: string;
   qrPath?: string;
   cookieString?: string;
@@ -73,41 +73,11 @@ const logger = {
 // In-memory session store for dev/self-host
 const sessions = new Map<string, QRLoginSession>()
 
+// Function để tạo thư mục tmp (chỉ cần thiết cho QR code)
 async function ensureTmpDir(): Promise<string> {
   const dir = path.join(process.cwd(), 'tmp')
   await fs.mkdir(dir, { recursive: true })
   return dir
-}
-
-async function ensureSessionDir(sessionId: string): Promise<string> {
-  const base = await ensureTmpDir()
-  const sessionDir = path.join(base, sessionId)
-  await fs.mkdir(sessionDir, { recursive: true })
-  return sessionDir
-}
-
-// Thêm hàm lưu cookie vào file
-async function saveCookieToFile(sessionId: string, cookieData: any, cookieString: string, metadata: any): Promise<string> {
-  try {
-    const sessionDir = await ensureSessionDir(sessionId)
-    const cookieFilePath = path.join(sessionDir, 'cookies.json')
-    
-    const cookieFileData = {
-      sessionId,
-      timestamp: new Date().toISOString(),
-      cookieString,
-      cookieArray: cookieData,
-      metadata,
-      filePath: cookieFilePath
-    }
-    
-    await fs.writeFile(cookieFilePath, JSON.stringify(cookieFileData, null, 2), 'utf8')
-    logger.log(`💾 Cookie đã được lưu vào file: ${cookieFilePath}`, 'info')
-    return cookieFilePath
-  } catch (error) {
-    logger.log(`❌ Lỗi khi lưu cookie vào file: ${(error as any)?.message}`, 'error')
-    return ''
-  }
 }
 
 function saveBase64Image(base64String: string, outputPath: string): void {
@@ -323,17 +293,7 @@ const qrPath = join(dir, qrFileName);
                 const savedAvatar = currentSession?.userInfo?.avatar || avatar;
                 const savedDisplayName = currentSession?.userInfo?.display_name || display_name;
 
-                // Lưu cookie vào file tmp
-                const metadata = {
-                  imei,
-                  userAgent: cbUA,
-                  avatar: savedAvatar,
-                  display_name: savedDisplayName,
-                  userId: userId || 'anonymous',
-                  loginTime: new Date().toISOString()
-                }
-                
-                const cookieFilePath = await saveCookieToFile(sessionId, cookie, cookieString, metadata)
+                // Cookie được lưu trực tiếp vào database, không cần lưu file tmp
                 
                 // Lưu vào MongoDB bảng ZaloConfig cho user hiện tại (nếu có token)
                 try {
@@ -404,19 +364,18 @@ const qrPath = join(dir, qrFileName);
                     logger.log(`✅ Cookie đã được lưu thành công vào database với ID: ${created?._id?.toString()}`, 'info');
                     logger.log(`🎯 User ${userId} giờ chỉ có 1 config active duy nhất`, 'info');
                     
-                    sessions.set(sessionId, { 
-                      ...(sessions.get(sessionId) || {}), 
-                      configId: created?._id?.toString(), 
-                      cookieString, 
-                      cookieArray: cookie, // Lưu cookie dưới dạng array
-                      cookieFilePath, // Lưu đường dẫn file cookie
-                      account: { 
-                        imei, 
-                        userAgent: cbUA, 
-                        avatar: savedAvatar, 
-                        display_name: savedDisplayName 
-                      }, 
-                      done: true, 
+                                      sessions.set(sessionId, { 
+                    ...(sessions.get(sessionId) || {}), 
+                    configId: created?._id?.toString(), 
+                    cookieString, 
+                    cookieArray: cookie, // Lưu cookie dưới dạng array
+                    account: { 
+                      imei, 
+                      userAgent: cbUA, 
+                      avatar: savedAvatar, 
+                      display_name: savedDisplayName 
+                    }, 
+                    done: true,  
                       ok: true, 
                       qrPath, 
                       dbSaved: true 
@@ -431,7 +390,7 @@ const qrPath = join(dir, qrFileName);
                       ...(sessions.get(sessionId) || {}), 
                       cookieString, 
                       cookieArray: cookie, // Lưu cookie dưới dạng array
-                      cookieFilePath, // Lưu đường dẫn file cookie
+
                       account: { 
                         imei, 
                         userAgent: cbUA, 
@@ -456,7 +415,7 @@ const qrPath = join(dir, qrFileName);
                     ...(sessions.get(sessionId) || {}), 
                     cookieString, 
                     cookieArray: cookie, // Lưu cookie dưới dạng array
-                    cookieFilePath, // Lưu đường dẫn file cookie
+
                     account: { 
                       imei, 
                       userAgent: cbUA, 
@@ -573,9 +532,7 @@ export async function GET(request: NextRequest) {
   if (status?.done && status?.ok) {
     logger.log(`📊 Session ${sessionId} completed:`, 'info');
     logger.log(`🍪 Cookie string: ${status.cookieString || 'N/A'}`, 'info');
-    if (status.cookieFilePath) {
-      logger.log(`📁 Cookie file saved at: ${status.cookieFilePath}`, 'info');
-    }
+    
   }
   
   // Trả về thông tin đã có sẵn trong session (không đọc file cookie/account nữa)
