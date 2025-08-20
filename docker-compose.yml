@@ -1,7 +1,7 @@
 services:
   web:
     build: .
-    container_name: zalo-sms-web
+    container_name: sms-service
     ports:
       - "6391:3000"
     environment:
