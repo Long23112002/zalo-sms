@@ -46,6 +46,7 @@ export function withAuth(handler: Function) {
     const authResult = authMiddleware(request as AuthenticatedRequest);
     if (authResult) return authResult;
     
-    return handler(request);
+    // Nếu auth thành công, gọi handler
+    return handler(request as AuthenticatedRequest);
   };
 }

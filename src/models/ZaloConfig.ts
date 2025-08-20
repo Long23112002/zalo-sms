@@ -3,9 +3,11 @@ import mongoose, { Document, Schema } from 'mongoose';
 export interface IZaloConfig extends Document {
   userId: mongoose.Types.ObjectId;
   name: string;
-  cookie: string;
+  cookie: string | any[] | object; // Hỗ trợ cả string, array và object
   imei: string;
   userAgent: string;
+  avatar?: string; // Thêm field avatar
+  display_name?: string; // Thêm field display_name
   proxy?: string;
   isActive: boolean;
   lastUsed?: Date;
@@ -26,7 +28,7 @@ const zaloConfigSchema = new Schema<IZaloConfig>({
     maxlength: 100
   },
   cookie: {
-    type: String,
+    type: Schema.Types.Mixed, // Hỗ trợ mọi type: string, array, object
     required: true
   },
   imei: {
@@ -37,6 +39,14 @@ const zaloConfigSchema = new Schema<IZaloConfig>({
   userAgent: {
     type: String,
     required: true
+  },
+  avatar: {
+    type: String,
+    trim: true
+  },
+  display_name: {
+    type: String,
+    trim: true
   },
   proxy: {
     type: String,

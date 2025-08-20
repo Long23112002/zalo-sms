@@ -61,13 +61,22 @@ interface MessageFormProps {
     activeZaloConfig: ZaloConfig;
     sessionId?: string;
     onSuccess?: (phone: string) => void;
-    onFail?: (phone: string) => void;
+    onFail?: (phone: string, error?: string) => void;
+    onDone?: () => void;
+  }) => void;
+  onSendFriendRequest?: (data: {
+    recipients: { phone: string; message: string }[];
+    delay: number;
+    activeZaloConfig: ZaloConfig;
+    sessionId?: string;
+    onSuccess?: (phone: string) => void;
+    onFail?: (phone: string, error?: string) => void;
     onDone?: () => void;
   }) => void;
   activeZaloConfig: ZaloConfig | null;
 }
 
-export default function MessageForm({ onSend, activeZaloConfig }: MessageFormProps) {
+export default function MessageForm({ onSend, onSendFriendRequest, activeZaloConfig }: MessageFormProps) {
   const [messageText, setMessageText] = useState('');
   const [delay, setDelay] = useState<string>('25');
   const [mounted, setMounted] = useState(false);
@@ -85,6 +94,10 @@ export default function MessageForm({ onSend, activeZaloConfig }: MessageFormPro
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
   const [pageSize, setPageSize] = useState<number>(10);
   const [currentPage, setCurrentPage] = useState<number>(1);
+
+  // Friend request table states
+  const [friendRequestList, setFriendRequestList] = useState<UserData[]>([]);
+  const [selectedFriendRequestKeys, setSelectedFriendRequestKeys] = useState<React.Key[]>([]);
 
   // Filters
   const [filterQuery, setFilterQuery] = useState('');
@@ -118,54 +131,228 @@ export default function MessageForm({ onSend, activeZaloConfig }: MessageFormPro
   const [sessionId, setSessionId] = useState<string>('');
   const countdownRef = useRef<NodeJS.Timeout | null>(null);
   const [sendPhase, setSendPhase] = useState<'idle' | 'pre' | 'sending'>('idle');
+  const [sendMode, setSendMode] = useState<'message' | 'friendRequest'>('message');
   const [preparedRecipients, setPreparedRecipients] = useState<{ phone: string; message: string }[]>([]);
   const [preparedDelay, setPreparedDelay] = useState<number>(25);
   const [totalCountdown, setTotalCountdown] = useState<number>(0);
 
   useEffect(() => {
-    if (!progressVisible) {
-      if (countdownRef.current) clearInterval(countdownRef.current);
-      return;
+    // Clear interval cũ nếu có
+    if (countdownRef.current) {
+      clearInterval(countdownRef.current);
+      countdownRef.current = null;
     }
-    if (countdownRef.current) clearInterval(countdownRef.current);
-    countdownRef.current = setInterval(() => {
-      setCountdown((c) => (c > 0 ? c - 1 : 0));
-    }, 1000);
-    return () => {
-      if (countdownRef.current) clearInterval(countdownRef.current);
-    };
-  }, [progressVisible, sendPhase]);
-
-  // Khi hết đếm ngược ở pha "pre" thì bắt đầu gửi
-  useEffect(() => {
-    if (progressVisible && sendPhase === 'pre' && countdown === 0) {
-      setSendPhase('sending');
-      const total = preparedRecipients.length * preparedDelay;
-      setCountdown(total);
-      setTotalCountdown(total);
-      onSend({
-        recipients: preparedRecipients,
-        delay: preparedDelay,
-        activeZaloConfig: activeZaloConfig!,
-        sessionId,
-        onSuccess: (phone) => {
-          setUserDataList((list) => {
-            const removedIds = list.filter((r) => (r.sdt || r.phone) === phone).map(r => r._id);
-            if (removedIds.length) {
-              setSelectedRowKeys((keys) => keys.filter(k => !removedIds.includes(k as string)));
+    
+    // Chỉ tạo interval mới khi progressVisible = true và đang ở phase pre
+    if (progressVisible && sendPhase === 'pre' && countdown > 0) {
+      countdownRef.current = setInterval(() => {
+        setCountdown((c) => {
+          if (c <= 0) {
+            // Clear interval khi countdown = 0
+            if (countdownRef.current) {
+              clearInterval(countdownRef.current);
+              countdownRef.current = null;
             }
-            return list.filter((r) => (r.sdt || r.phone) !== phone);
-          });
-        },
-        onFail: () => {},
-        onDone: () => {
-          setProgressVisible(false);
-          setSendPhase('idle');
-        }
-      });
+            return 0;
+          }
+          return c - 1;
+        });
+      }, 1000);
     }
-  }, [progressVisible, sendPhase, countdown, preparedRecipients, preparedDelay, onSend, activeZaloConfig]);
+    
+    // Cleanup function
+    return () => {
+      if (countdownRef.current) {
+        clearInterval(countdownRef.current);
+        countdownRef.current = null;
+      }
+    };
+  }, [progressVisible, sendPhase, countdown]);
 
+  // Gửi tuần tự theo delay config khi countdown đạt đến thời điểm gửi
+  useEffect(() => {
+    if (progressVisible && sendPhase === 'pre' && countdown >= 0) {
+      // Tính toán thời điểm gửi cho từng người
+      const totalTime = preparedRecipients.length * preparedDelay;
+      const currentTime = totalTime - countdown;
+      
+      // Debug log để xem giá trị
+      console.log(`Debug: countdown=${countdown}, totalTime=${totalTime}, currentTime=${currentTime}, preparedDelay=${preparedDelay}, preparedRecipients.length=${preparedRecipients.length}`);
+      console.log(`Debug: preparedRecipients=`, preparedRecipients);
+      
+      // Kiểm tra xem có phải thời điểm gửi người tiếp theo không
+      // Gửi người đầu tiên sau delay đầu tiên, người thứ 2 sau delay thứ 2, v.v.
+      // Cần gửi người cuối cùng khi countdown = 0
+      const shouldSendNow = (currentTime > 0 && currentTime % preparedDelay === 0) || countdown === 0;
+      
+      console.log(`Debug: shouldSendNow=${shouldSendNow}, currentTime > 0=${currentTime > 0}, currentTime % preparedDelay=${currentTime % preparedDelay}`);
+      
+      if (shouldSendNow) {
+        console.log(`Sending at countdown ${countdown}, current time: ${currentTime}`);
+        
+        // Tính toán người cần gửi (dựa trên thời gian đã trôi qua)
+        let personIndex;
+        if (countdown === 0) {
+          // Khi countdown = 0, gửi người cuối cùng
+          // Với 2 người: index 0 và 1, người cuối là index 1
+          personIndex = preparedRecipients.length - 1;
+        } else {
+          // Tính toán bình thường
+          // Với currentTime = 10, delay = 10: personIndex = Math.floor(10/10) = 1
+          // Nhưng cần gửi người đầu tiên trước, nên phải trừ 1
+          personIndex = Math.floor(currentTime / preparedDelay) - 1;
+        }
+        console.log(`Debug: personIndex=${personIndex}, countdown=${countdown}, currentRecipient=${JSON.stringify(preparedRecipients[personIndex])}`);
+        if (personIndex >= 0 && personIndex < preparedRecipients.length) {
+          const currentRecipient = preparedRecipients[personIndex];
+          
+          if (sendMode === 'message') {
+            onSend({
+              recipients: [currentRecipient], // Chỉ gửi 1 người hiện tại
+              delay: 0, // Không delay thêm
+              activeZaloConfig: activeZaloConfig!,
+              sessionId,
+              onSuccess: async (phone) => {
+                try {
+                  // Xóa dữ liệu người dùng khỏi database khi gửi tin nhắn thành công
+                  const response = await authFetch(`/api/user-data?phone=${encodeURIComponent(phone)}&hard=true`, {
+                    method: 'DELETE',
+                    headers: {
+                      'Authorization': `Bearer ${localStorage.getItem('accessToken') || ''}`
+                    }
+                  });
+                  
+                  if (response.ok) {
+                    // Xóa khỏi UI
+                    setUserDataList((list) => {
+                      const removedIds = list.filter((r) => (r.sdt || r.phone) === phone).map(r => r._id);
+                      if (removedIds.length) {
+                        setSelectedRowKeys((keys) => keys.filter(k => !removedIds.includes(k as string)));
+                      }
+                      return list.filter((r) => (r.sdt || r.phone) !== phone);
+                    });
+                    
+                    // Hiển thị thông báo thành công
+                    msgApi.success(`Đã gửi tin nhắn và xóa dữ liệu của ${phone}`);
+                  } else {
+                    // Nếu không xóa được database, vẫn xóa khỏi UI nhưng hiển thị cảnh báo
+                    setUserDataList((list) => {
+                      const removedIds = list.filter((r) => (r.sdt || r.phone) === phone).map(r => r._id);
+                      if (removedIds.length) {
+                        setSelectedRowKeys((keys) => keys.filter(k => !removedIds.includes(k as string)));
+                      }
+                      return list.filter((r) => (r.sdt || r.phone) !== phone);
+                    });
+                    
+                    msgApi.warning(`Đã gửi tin nhắn thành công nhưng không thể xóa dữ liệu của ${phone}`);
+                  }
+                } catch (error) {
+                  console.error('Error deleting user data:', error);
+                  // Vẫn xóa khỏi UI để tránh gửi lại
+                  setUserDataList((list) => {
+                    const removedIds = list.filter((r) => (r.sdt || r.phone) === phone).map(r => r._id);
+                    if (removedIds.length) {
+                      setSelectedRowKeys((keys) => keys.filter(k => !removedIds.includes(k as string)));
+                    }
+                    return list.filter((r) => (r.sdt || r.phone) !== phone);
+                  });
+                  
+                  msgApi.warning(`Đã gửi tin nhắn thành công nhưng không thể xóa dữ liệu của ${phone}`);
+                }
+              },
+              onFail: (phone, error) => {
+                // Hiển thị thông báo lỗi chi tiết
+                if (error) {
+                  msgApi.error(`Gửi tin nhắn thất bại cho ${phone}: ${error}`);
+                } else {
+                  msgApi.error(`Gửi tin nhắn thất bại cho ${phone}`);
+                }
+              },
+              onDone: () => {
+                // Không đóng modal, chỉ hoàn thành gửi người này
+                console.log(`Completed sending to person ${personIndex + 1}`);
+              }
+            });
+          } else if (sendMode === 'friendRequest' && onSendFriendRequest) {
+            onSendFriendRequest({
+              recipients: [currentRecipient], // Chỉ gửi 1 người hiện tại
+              delay: 0, // Không delay thêm
+              activeZaloConfig: activeZaloConfig!,
+              sessionId,
+              onSuccess: async (phone) => {
+                try {
+                  // Xóa dữ liệu người dùng khỏi database khi gửi lời mời kết bạn thành công
+                  const response = await authFetch(`/api/user-data?phone=${encodeURIComponent(phone)}&hard=true`, {
+                    method: 'DELETE',
+                    headers: {
+                      'Authorization': `Bearer ${localStorage.getItem('accessToken') || ''}`
+                    }
+                  });
+                  
+                  if (response.ok) {
+                    // Xóa khỏi bảng friend request UI
+                    setFriendRequestList((list) => {
+                      const removedIds = list.filter((r) => (r.sdt || r.phone) === phone).map(r => r._id);
+                      if (removedIds.length) {
+                        setSelectedFriendRequestKeys((keys) => keys.filter(k => !removedIds.includes(k as string)));
+                      }
+                      return list.filter((r) => (r.sdt || r.phone) !== phone);
+                    });
+                    
+                    // Hiển thị thông báo thành công
+                    msgApi.success(`Đã gửi lời mời kết bạn và xóa dữ liệu của ${phone}`);
+                  } else {
+                    // Nếu không xóa được database, vẫn xóa khỏi UI nhưng hiển thị cảnh báo
+                    setFriendRequestList((list) => {
+                      const removedIds = list.filter((r) => (r.sdt || r.phone) === phone).map(r => r._id);
+                      if (removedIds.length) {
+                        setSelectedFriendRequestKeys((keys) => keys.filter(k => !removedIds.includes(k as string)));
+                      }
+                      return list.filter((r) => (r.sdt || r.phone) !== phone);
+                    });
+                    
+                    msgApi.warning(`Đã gửi lời mời kết bạn thành công nhưng không thể xóa dữ liệu của ${phone}`);
+                  }
+                } catch (error) {
+                  console.error('Error deleting user data:', error);
+                  // Vẫn xóa khỏi UI để tránh gửi lại
+                  setFriendRequestList((list) => {
+                    const removedIds = list.filter((r) => (r.sdt || r.phone) === phone).map(r => r._id);
+                    if (removedIds.length) {
+                      setSelectedFriendRequestKeys((keys) => keys.filter(k => !removedIds.includes(k as string)));
+                    }
+                    return list.filter((r) => (r.sdt || r.phone) !== phone);
+                  });
+                  
+                  msgApi.warning(`Đã gửi lời mời kết bạn thành công nhưng không thể xóa dữ liệu của ${phone}`);
+                }
+              },
+              onFail: (phone, error) => {
+                // Hiển thị thông báo lỗi chi tiết
+                if (error) {
+                  msgApi.error(`Gửi lời mời kết bạn thất bại cho ${phone}: ${error}`);
+                } else {
+                  msgApi.error(`Gửi lời mời kết bạn thất bại cho ${phone}`);
+                }
+              },
+              onDone: () => {
+                // Không đóng modal, chỉ hoàn thành gửi người này
+                console.log(`Completed sending friend request to person ${personIndex + 1}`);
+              }
+            });
+          }
+        }
+      }
+    }
+    
+    // Khi countdown về 0, đợi thêm 3 giây để đảm bảo người cuối cùng đã gửi xong
+    if (progressVisible && sendPhase === 'pre' && countdown === 0) {
+      setTimeout(() => {
+        setProgressVisible(false);
+        setSendPhase('idle');
+      }, 3000);
+    }
+  }, [progressVisible, sendPhase, countdown, preparedRecipients, preparedDelay, onSend, onSendFriendRequest, activeZaloConfig, sendMode]);
   const handleSendSelected = () => {
     if (!activeZaloConfig) {
       msgApi.warning('Vui lòng đăng nhập Zalo trước');
@@ -193,23 +380,61 @@ export default function MessageForm({ onSend, activeZaloConfig }: MessageFormPro
     }));
     setPreparedRecipients(recipients);
     setPreparedDelay(delaySeconds);
-    // Pha đếm ngược trước khi gửi = delay cấu hình
+    // Pha đếm ngược trước khi gửi = tổng thời gian (số người × delay)
     setSendPhase('pre');
-    setCountdown(delaySeconds);
-    setTotalCountdown(delaySeconds);
+    const totalTime = recipients.length * delaySeconds;
+    setCountdown(totalTime);
+    setTotalCountdown(totalTime);
     setProgressVisible(true);
   };
 
   const handleStopSending = useCallback(() => {
-    if (!sessionId) return;
-    try {
-      localStorage.setItem(`cancel:${sessionId}`, '1');
-    } catch {}
-    msgApi.warning('Đã dừng gửi');
+    // Đánh dấu dừng gửi
+    if (sessionId) {
+      try {
+        localStorage.setItem(`cancel:${sessionId}`, '1');
+      } catch {}
+    }
+    
+    // Dừng countdown
+    if (countdownRef.current) {
+      clearInterval(countdownRef.current);
+      countdownRef.current = null;
+    }
+    
+    // Reset các state
     setSendPhase('idle');
+    setCountdown(0);
+    setTotalCountdown(0);
     setProgressVisible(false);
-    if (countdownRef.current) clearInterval(countdownRef.current);
+    
+    // Thông báo
+    msgApi.warning('Đã dừng gửi');
+    
+    console.log('Stopped sending, sessionId:', sessionId);
   }, [sessionId]);
+
+  // Xử lý việc dừng gửi khi sessionId thay đổi
+  useEffect(() => {
+    if (sessionId && typeof window !== 'undefined') {
+      const checkCancel = () => {
+        try {
+          const isCancelled = localStorage.getItem(`cancel:${sessionId}`) === '1';
+          if (isCancelled) {
+            console.log('Session cancelled, stopping...');
+            handleStopSending();
+          }
+        } catch {}
+      };
+      
+      // Kiểm tra mỗi giây
+      const cancelCheckInterval = setInterval(checkCancel, 1000);
+      
+      return () => {
+        clearInterval(cancelCheckInterval);
+      };
+    }
+  }, [sessionId, handleStopSending]);
 
   // Parse helpers
   const parseRowsToData = (rows: any[][]) => {
@@ -448,6 +673,41 @@ export default function MessageForm({ onSend, activeZaloConfig }: MessageFormPro
     setMessageText(updatedMessage);
   };
 
+  // Thêm data vào bảng friend request
+  const addToFriendRequestList = (userData: UserData) => {
+    // Kiểm tra xem đã có trong danh sách chưa
+    const exists = friendRequestList.some(item => 
+      (item.sdt || item.phone) === (userData.sdt || userData.phone)
+    );
+    
+    if (!exists) {
+      // Thêm vào bảng friend request
+      setFriendRequestList(prev => [...prev, userData]);
+      
+      // Xóa khỏi bảng dữ liệu chính
+      setUserDataList(prev => prev.filter(item => 
+        (item.sdt || item.phone) !== (userData.sdt || userData.phone)
+      ));
+      
+      // Xóa khỏi danh sách đã chọn nếu có
+      setSelectedRowKeys(prev => prev.filter(key => {
+        const item = userDataList.find(u => u._id === key);
+        return item && (item.sdt || item.phone) !== (userData.sdt || userData.phone);
+      }));
+      
+      msgApi.success(`Đã thêm ${userData.xxx || userData.sdt || userData.phone} vào danh sách gửi lời mời kết bạn và xóa khỏi bảng chính`);
+    } else {
+      msgApi.warning(`${userData.xxx || userData.sdt || userData.phone} đã có trong danh sách`);
+    }
+  };
+
+  // Xóa data khỏi bảng friend request
+  const removeFromFriendRequestList = (ids: string[]) => {
+    setFriendRequestList(prev => prev.filter(item => !ids.includes(item._id)));
+    setSelectedFriendRequestKeys(prev => prev.filter(k => !ids.includes(String(k))));
+    msgApi.success(`Đã xóa ${ids.length} bản ghi khỏi danh sách gửi lời mời kết bạn`);
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     
@@ -481,8 +741,9 @@ export default function MessageForm({ onSend, activeZaloConfig }: MessageFormPro
     setPreparedRecipients(recipients);
     setPreparedDelay(delaySeconds);
     setSendPhase('pre');
-    setCountdown(delaySeconds);
-    setTotalCountdown(delaySeconds);
+    const totalTime = recipients.length * delaySeconds;
+    setCountdown(totalTime);
+    setTotalCountdown(totalTime);
     setProgressVisible(true);
   };
 
@@ -545,9 +806,14 @@ export default function MessageForm({ onSend, activeZaloConfig }: MessageFormPro
       {contextHolder}
       {/* Header */}
       <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">Gửi tin nhắn hàng loạt</h1>
+        <h1 className="text-3xl font-bold text-gray-900 mb-2">
+          {sendMode === 'message' ? 'Gửi tin nhắn hàng loạt' : 'Gửi lời mời kết bạn hàng loạt'}
+        </h1>
         <p className="text-gray-600">
-          Gửi tin nhắn đến nhiều số điện thoại cùng lúc
+          {sendMode === 'message' 
+            ? 'Gửi tin nhắn đến nhiều số điện thoại cùng lúc'
+            : 'Gửi lời mời kết bạn đến nhiều số điện thoại cùng lúc'
+          }
           {activeZaloConfig && (
             <span className="ml-2 text-blue-600 font-medium">
               (Đang sử dụng: {activeZaloConfig.name})
@@ -588,13 +854,18 @@ export default function MessageForm({ onSend, activeZaloConfig }: MessageFormPro
 
         {/* Message Content */}
         <div className="bg-white rounded-2xl shadow-xl p-6 border border-gray-100">
-          <h2 className="text-xl font-semibold text-gray-900 mb-4">Nội dung tin nhắn</h2>
+          <h2 className="text-xl font-semibold text-gray-900 mb-4">
+            {sendMode === 'message' ? 'Nội dung tin nhắn' : 'Nội dung lời mời kết bạn'}
+          </h2>
           <textarea
             value={messageText}
             onChange={(e) => setMessageText(e.target.value)}
             rows={6}
             className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
-            placeholder="Nhập nội dung tin nhắn hoặc chọn template từ trên..."
+            placeholder={sendMode === 'message' 
+              ? "Nhập nội dung tin nhắn hoặc chọn template từ trên..."
+              : "Nhập nội dung lời mời kết bạn hoặc chọn template từ trên..."
+            }
           />
           <div className="mt-2 text-sm text-gray-500">
             {messageText.length} ký tự
@@ -629,17 +900,31 @@ export default function MessageForm({ onSend, activeZaloConfig }: MessageFormPro
                     <Button size="small" danger icon={<DeleteOutlined />}>Xóa đã chọn ({selectedRowKeys.length})</Button>
                   </Popconfirm>
                 )}
-                <Button 
+                {/* <Button 
                   size="small" 
                   type="default" 
                   disabled={selectedRowKeys.length === 0}
-                  onClick={handleSendSelected}
+                  onClick={() => {
+                    setSendMode('message');
+                    handleSendSelected();
+                  }}
                 >
                   Gửi tin nhắn ({selectedRowKeys.length})
-                </Button>
+                </Button> */}
+                {/* <Button 
+                  size="small" 
+                  type="primary" 
+                  disabled={selectedRowKeys.length === 0}
+                  onClick={() => {
+                    setSendMode('friendRequest');
+                    handleSendSelected();
+                  }}
+                >
+                  Gửi lời mời kết bạn ({selectedRowKeys.length})
+                </Button> */}
                 <div className="flex items-center gap-2">
-                  <span className="text-sm text-gray-600">Delay (giây):</span>
-                  <Input
+                  {/* <span className="text-sm text-gray-600">Delay (giây):</span> */}
+                  {/* <Input
                     size="small"
                     inputMode="numeric"
                     value={delay}
@@ -648,7 +933,7 @@ export default function MessageForm({ onSend, activeZaloConfig }: MessageFormPro
                       setDelay(v);
                     }}
                     style={{ width: 90 }}
-                  />
+                  /> */}
                 </div>
                 <div className="ml-auto hidden sm:block text-sm text-gray-500">
                   Đã chọn {selectedRowKeys.length}/{userDataList.length}
@@ -678,6 +963,7 @@ export default function MessageForm({ onSend, activeZaloConfig }: MessageFormPro
             size="small"
             bordered
             sticky
+
             pagination={{
               pageSize,
               current: currentPage,
@@ -705,35 +991,138 @@ export default function MessageForm({ onSend, activeZaloConfig }: MessageFormPro
             }}
             scroll={{ x: 'max-content' }}
             columns={[
-              { title: 'xxx', dataIndex: 'xxx', key: 'xxx', width: 140 },
-              { title: 'yyy', dataIndex: 'yyy', key: 'yyy', width: 140 },
               { 
-                title: 'sdt', dataIndex: 'sdt', key: 'sdt', width: 160,
+                title: 'xxx', 
+                dataIndex: 'xxx', 
+                key: 'xxx', 
+                width: 120,
+                ellipsis: true,
+                render: (text: string) => (
+                  <div className="truncate" title={text}>
+                    {text}
+                  </div>
+                )
+              },
+              { 
+                title: 'yyy', 
+                dataIndex: 'yyy', 
+                key: 'yyy', 
+                width: 120,
+                ellipsis: true,
+                render: (text: string) => (
+                  <div className="truncate" title={text}>
+                    {text}
+                  </div>
+                )
+              },
+              { 
+                title: 'sdt', 
+                dataIndex: 'sdt', 
+                key: 'sdt', 
+                width: 120,
+                ellipsis: true,
                 render: (text: string, record: any) => (
-                  <Button type="link" style={{ padding: 0, height: 'auto' }} onClick={() => openPreviewForRow(record)}>
+                  <Button 
+                    type="link" 
+                    style={{ padding: 0, height: 'auto' }} 
+                    onClick={() => openPreviewForRow(record)}
+                    className="truncate block"
+                    title={text}
+                  >
                     {text}
                   </Button>
                 )
               },
-              { title: 'ttt', dataIndex: 'ttt', key: 'ttt', width: 160 },
-              { title: 'zzz', dataIndex: 'zzz', key: 'zzz', width: 120 },
-              { title: 'www', dataIndex: 'www', key: 'www', width: 120 },
-              { title: 'uuu', dataIndex: 'uuu', key: 'uuu', width: 120 },
-              { title: 'vvv', dataIndex: 'vvv', key: 'vvv', width: 120 },
+              { 
+                title: 'ttt', 
+                dataIndex: 'ttt', 
+                key: 'ttt', 
+                width: 100,
+                ellipsis: true,
+                responsive: ['md'],
+                render: (text: string) => (
+                  <div className="truncate" title={text}>
+                    {text}
+                  </div>
+                )
+              },
+              { 
+                title: 'zzz', 
+                dataIndex: 'zzz', 
+                key: 'zzz', 
+                width: 80,
+                ellipsis: true,
+                responsive: ['lg'],
+                render: (text: string) => (
+                  <div className="truncate" title={text}>
+                    {text}
+                  </div>
+                )
+              },
+              { 
+                title: 'www', 
+                dataIndex: 'www', 
+                key: 'www', 
+                width: 80,
+                ellipsis: true,
+                responsive: ['xl'],
+                render: (text: string) => (
+                  <div className="truncate" title={text}>
+                    {text}
+                  </div>
+                )
+              },
+              { 
+                title: 'uuu', 
+                dataIndex: 'uuu', 
+                key: 'uuu', 
+                width: 80,
+                ellipsis: true,
+                responsive: ['xl'],
+                render: (text: string) => (
+                  <div className="truncate" title={text}>
+                    {text}
+                  </div>
+                )
+              },
+              { 
+                title: 'vvv', 
+                dataIndex: 'vvv', 
+                key: 'vvv', 
+                width: 80,
+                ellipsis: true,
+                responsive: ['xl'],
+                render: (text: string) => (
+                  <div className="truncate" title={text}>
+                    {text}
+                  </div>
+                )
+              },
               {
                 title: 'Hành động',
                 key: 'actions',
                 fixed: 'right' as any,
-                width: 110,
+                width: 160,
                 render: (_: any, record: any) => (
-                  <Popconfirm
-                    title="Xóa bản ghi này?"
-                    okText="Xóa"
-                    cancelText="Hủy"
-                    onConfirm={() => deleteByIds([record._id])}
-                  >
-                    <Button size="small" danger icon={<DeleteOutlined />}>Xóa</Button>
-                  </Popconfirm>
+                  <Space size="small">
+                    <Button 
+                      size="small" 
+                      type="primary" 
+                      icon={<span>+</span>}
+                      onClick={() => addToFriendRequestList(record)}
+                      title="Thêm vào danh sách gửi lời mời kết bạn"
+                    >
+                      Thêm
+                    </Button>
+                    <Popconfirm
+                      title="Xóa bản ghi này?"
+                      okText="Xóa"
+                      cancelText="Hủy"
+                      onConfirm={() => deleteByIds([record._id])}
+                    >
+                      <Button size="small" danger icon={<DeleteOutlined />}>Xóa</Button>
+                    </Popconfirm>
+                  </Space>
                 )
               }
             ]}
@@ -761,6 +1150,213 @@ export default function MessageForm({ onSend, activeZaloConfig }: MessageFormPro
           </div>
         </div>
 
+        {/* Friend Request Table */}
+        <div className="bg-white rounded-2xl shadow-xl p-6 border border-gray-100">
+          <div className="mb-4 rounded-lg border border-gray-200 bg-gray-50 p-3">
+            <div className="flex flex-col gap-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="text-lg font-semibold text-gray-900">Danh sách gửi lời mời kết bạn</h3>
+                {selectedFriendRequestKeys.length > 0 && (
+                  <Popconfirm
+                    title={`Xóa ${selectedFriendRequestKeys.length} bản ghi khỏi danh sách?`}
+                    okText="Xóa"
+                    cancelText="Hủy"
+                    onConfirm={() => removeFromFriendRequestList(selectedFriendRequestKeys as string[])}
+                  >
+                    <Button size="small" danger icon={<DeleteOutlined />}>Xóa đã chọn ({selectedFriendRequestKeys.length})</Button>
+                  </Popconfirm>
+                )}
+                {/* <Button 
+                  size="small" 
+                  type="primary" 
+                  disabled={friendRequestList.length === 0}
+                  onClick={() => {
+                    setSendMode('friendRequest');
+                    // Gửi từ danh sách friend request
+                    const recipients = friendRequestList.map(r => ({
+                      phone: String(r.sdt || r.phone),
+                      message: mapContentForRow(messageText, r)
+                    }));
+                    setPreparedRecipients(recipients);
+                    setPreparedDelay(Number(delay) || 25);
+                    setSendPhase('pre');
+                    const totalTime = recipients.length * (Number(delay) || 25);
+                    setCountdown(totalTime);
+                    setTotalCountdown(totalTime);
+                    setProgressVisible(true);
+                  }}
+                >
+                  Gửi lời mời kết bạn ({friendRequestList.length})
+                </Button> */}
+                <div className="ml-auto text-sm text-gray-500">
+                  Đã chọn {selectedFriendRequestKeys.length}/{friendRequestList.length}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <Table
+            rowKey="_id"
+            dataSource={friendRequestList}
+            size="small"
+            bordered
+            sticky
+            pagination={{
+              pageSize: 10,
+              showSizeChanger: false,
+              showTotal: (total) => `Tổng ${total} bản ghi`
+            }}
+            rowSelection={{
+              selectedRowKeys: selectedFriendRequestKeys,
+              onChange: (keys) => setSelectedFriendRequestKeys(keys),
+              preserveSelectedRowKeys: true,
+              selections: [
+                Table.SELECTION_ALL,
+                Table.SELECTION_NONE,
+                {
+                  key: 'select-page',
+                  text: 'Chọn tất cả trong trang',
+                  onSelect: (changableRowKeys) => {
+                    setSelectedFriendRequestKeys(changableRowKeys);
+                  }
+                }
+              ]
+            }}
+            scroll={{ x: 'max-content' }}
+            columns={[
+              { 
+                title: 'xxx', 
+                dataIndex: 'xxx', 
+                key: 'xxx', 
+                width: 120,
+                ellipsis: true,
+                render: (text: string) => (
+                  <div className="truncate" title={text}>
+                    {text}
+                  </div>
+                )
+              },
+              { 
+                title: 'yyy', 
+                dataIndex: 'yyy', 
+                key: 'yyy', 
+                width: 120,
+                ellipsis: true,
+                render: (text: string) => (
+                  <div className="truncate" title={text}>
+                    {text}
+                  </div>
+                )
+              },
+              { 
+                title: 'sdt', 
+                dataIndex: 'sdt', 
+                key: 'sdt', 
+                width: 120,
+                ellipsis: true,
+                render: (text: string, record: any) => (
+                  <Button 
+                    type="link" 
+                    style={{ padding: 0, height: 'auto' }} 
+                    onClick={() => openPreviewForRow(record)}
+                    className="truncate block"
+                    title={text}
+                  >
+                    {text}
+                  </Button>
+                )
+              },
+              { 
+                title: 'ttt', 
+                dataIndex: 'ttt', 
+                key: 'ttt', 
+                width: 100,
+                ellipsis: true,
+                responsive: ['md'],
+                render: (text: string) => (
+                  <div className="truncate" title={text}>
+                    {text}
+                  </div>
+                )
+              },
+              { 
+                title: 'zzz', 
+                dataIndex: 'zzz', 
+                key: 'zzz', 
+                width: 80,
+                ellipsis: true,
+                responsive: ['lg'],
+                render: (text: string) => (
+                  <div className="truncate" title={text}>
+                    {text}
+                  </div>
+                )
+              },
+              { 
+                title: 'www', 
+                dataIndex: 'www', 
+                key: 'www', 
+                width: 80,
+                ellipsis: true,
+                responsive: ['xl'],
+                render: (text: string) => (
+                  <div className="truncate" title={text}>
+                    {text}
+                  </div>
+                )
+              },
+              { 
+                title: 'uuu', 
+                dataIndex: 'uuu', 
+                key: 'uuu', 
+                width: 80,
+                ellipsis: true,
+                responsive: ['xl'],
+                render: (text: string) => (
+                  <div className="truncate" title={text}>
+                    {text}
+                  </div>
+                )
+              },
+              { 
+                title: 'vvv', 
+                dataIndex: 'vvv', 
+                key: 'vvv', 
+                width: 80,
+                ellipsis: true,
+                responsive: ['xl'],
+                render: (text: string) => (
+                  <div className="truncate" title={text}>
+                    {text}
+                  </div>
+                )
+              },
+              {
+                title: 'Hành động',
+                key: 'actions',
+                fixed: 'right' as any,
+                width: 110,
+                render: (_: any, record: any) => (
+                  <Popconfirm
+                    title="Xóa khỏi danh sách gửi lời mời kết bạn?"
+                    okText="Xóa"
+                    cancelText="Hủy"
+                    onConfirm={() => removeFromFriendRequestList([record._id])}
+                  >
+                    <Button size="small" danger icon={<DeleteOutlined />}>Xóa</Button>
+                  </Popconfirm>
+                )
+              }
+            ]}
+          />
+
+          <div className="mt-3 flex items-center justify-between">
+            <div className="text-sm text-gray-600">
+              Tổng cộng: <span className="font-medium">{friendRequestList.length}</span> người nhận
+            </div>
+          </div>
+        </div>
+
         {/* Settings */}
         <div className="bg-white rounded-2xl shadow-xl p-6 border border-gray-100">
           <h2 className="text-xl font-semibold text-gray-900 mb-4">Cài đặt</h2>
@@ -784,14 +1380,40 @@ export default function MessageForm({ onSend, activeZaloConfig }: MessageFormPro
         {/* Đã loại bỏ khu vực Test Cookie Format theo yêu cầu */}
 
         {/* Send Button */}
-        <div className="flex justify-center">
+        <div className="flex flex-col sm:flex-row justify-center gap-4">
           <button
             type="submit"
             disabled={!activeZaloConfig || !messageText.trim() || selectedRowKeys.length === 0}
-            className="inline-flex items-center px-8 py-4 bg-blue-600 text-white text-lg font-semibold rounded-xl hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-lg hover:shadow-xl"
+            onClick={() => setSendMode('message')}
+            className="inline-flex items-center justify-center px-8 py-4 bg-blue-600 text-white text-lg font-semibold rounded-xl hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-lg hover:shadow-xl w-full sm:w-auto"
           >
             <PaperAirplaneIcon className="h-6 w-6 mr-3" />
             Gửi tin nhắn hàng loạt
+          </button>
+          <button
+            type="button"
+            disabled={!activeZaloConfig || !messageText.trim() || friendRequestList.length === 0}
+            onClick={() => {
+              setSendMode('friendRequest');
+              // Gửi từ bảng friend request thay vì bảng chính
+              const recipients = friendRequestList.map(r => ({
+                phone: String(r.sdt || r.phone),
+                message: mapContentForRow(messageText, r)
+              }));
+              setPreparedRecipients(recipients);
+              setPreparedDelay(Number(delay) || 25);
+              setSendPhase('pre');
+              const totalTime = recipients.length * (Number(delay) || 25);
+              setCountdown(totalTime);
+              setTotalCountdown(totalTime);
+              setProgressVisible(true);
+            }}
+            className="inline-flex items-center justify-center px-8 py-4 bg-green-600 text-white text-lg font-semibold rounded-xl hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-lg hover:shadow-xl w-full sm:w-auto"
+          >
+            <svg className="h-6 w-6 mr-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197m13.5-9a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0z" />
+            </svg>
+            Gửi lời mời kết bạn hàng loạt
           </button>
         </div>
       </form>
@@ -814,9 +1436,14 @@ export default function MessageForm({ onSend, activeZaloConfig }: MessageFormPro
 
         {/* Progress Modal */}
         <Modal
-          title={sendPhase === 'pre' ? 'Chuẩn bị gửi tin nhắn' : 'Đang gửi tin nhắn'}
+          title={sendPhase === 'pre' 
+            ? `Chuẩn bị ${sendMode === 'message' ? 'gửi tin nhắn' : 'gửi lời mời kết bạn'}`
+            : `Đang ${sendMode === 'message' ? 'gửi tin nhắn' : 'gửi lời mời kết bạn'}`
+          }
           open={progressVisible}
           onCancel={() => setProgressVisible(false)}
+          maskClosable={false}
+          closable={false}
           footer={null}
         >
           <div className="space-y-3">
@@ -828,14 +1455,16 @@ export default function MessageForm({ onSend, activeZaloConfig }: MessageFormPro
               />
               <div className="text-sm text-gray-700">
                 {sendPhase === 'pre' ? (
-                  <>Bắt đầu gửi sau: <b>{new Date(countdown * 1000).toISOString().substring(14, 19)}</b></>
+                  <>Bắt đầu {sendMode === 'message' ? 'gửi tin nhắn' : 'gửi lời mời kết bạn'} sau: <b>{new Date(countdown * 1000).toISOString().substring(14, 19)}</b></>
                 ) : (
-                  <>Thời gian dự kiến còn lại: <b>{new Date(countdown * 1000).toISOString().substring(11, 19)}</b></>
+                  <>Đang gửi tuần tự, không còn đếm ngược</>
                 )}
               </div>
             </div>
             <div className="flex justify-end">
-              <Button danger onClick={handleStopSending}>Dừng gửi</Button>
+              <Button danger onClick={handleStopSending}>
+                Dừng {sendMode === 'message' ? 'gửi tin nhắn' : 'gửi lời mời kết bạn'}
+              </Button>
             </div>
           </div>
         </Modal>

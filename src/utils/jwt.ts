@@ -16,7 +16,7 @@ export interface TokenPair {
 
 // Tạo access token (15 phút)
 export const generateAccessToken = (payload: JWTPayload): string => {
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: '10s' });
+  return jwt.sign(payload, JWT_SECRET, { expiresIn: '15m' });
 };
 
 // Tạo refresh token (7 ngày)

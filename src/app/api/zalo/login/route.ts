@@ -66,10 +66,10 @@ export async function POST(request: NextRequest) {
     // Sử dụng dynamic import để tránh vấn đề với sharp trên Windows
     let Zalo;
     try {
-      const zcaModule = await import('zca-js');
+      const zcaModule = await import('zca-js-16');
       Zalo = zcaModule.Zalo;
     } catch (importError) {
-      console.error('Failed to import zca-js:', importError);
+      console.error('Failed to import zca-js-16:', importError);
       return NextResponse.json(
         { error: 'Không thể load thư viện Zalo. Vui lòng kiểm tra cài đặt.' },
         { status: 500 }

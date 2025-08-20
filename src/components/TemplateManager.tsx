@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { PlusIcon, PencilIcon, TrashIcon, DocumentTextIcon, VariableIcon } from '@heroicons/react/24/outline';
+import { Modal } from 'antd';
 
 interface Template {
   _id: string;
@@ -215,84 +216,77 @@ export default function TemplateManager({ accessToken, onTemplateSelect }: Templ
         </div>
       )}
 
-      {/* Template Form */}
-      {showForm && (
-        <div className="mb-8 bg-white rounded-2xl shadow-xl p-6 border border-gray-100">
-          <div className="flex items-center justify-between mb-6">
-            <h2 className="text-xl font-semibold text-gray-900">
-              {editingTemplate ? 'Chỉnh sửa template' : 'Thêm template mới'}
-            </h2>
-            <button
-              onClick={resetForm}
-              className="text-gray-400 hover:text-gray-600 transition-colors"
-            >
-              ✕
-            </button>
+      {/* Template Modal */}
+      <Modal
+        title={editingTemplate ? 'Chỉnh sửa template' : 'Thêm template mới'}
+        open={showForm}
+        onCancel={resetForm}
+        footer={null}
+        width={600}
+        destroyOnClose
+      >
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Tên template <span className="text-red-500">*</span>
+            </label>
+            <input
+              name="name"
+              type="text"
+              required
+              value={formData.name}
+              onChange={handleInputChange}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              placeholder="Ví dụ: Chào hỏi khách hàng"
+            />
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Tên template <span className="text-red-500">*</span>
-              </label>
-              <input
-                name="name"
-                type="text"
-                required
-                value={formData.name}
-                onChange={handleInputChange}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                placeholder="Ví dụ: Chào hỏi khách hàng"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Nội dung template <span className="text-red-500">*</span>
-              </label>
-              <textarea
-                name="content"
-                required
-                rows={6}
-                value={formData.content}
-                onChange={handleInputChange}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                placeholder="Nhập nội dung template. Sử dụng các biến như xxx, yyy, sdt... Ví dụ: Xin chào xxx, chúc yyy một ngày tốt lành!"
-              />
-              
-              {/* Preview */}
-              {previewContent && (
-                <div className="mt-3 p-3 bg-gray-50 rounded-lg border">
-                  <div className="flex items-center mb-2">
-                    <VariableIcon className="h-4 w-4 text-gray-500 mr-2" />
-                    <span className="text-sm font-medium text-gray-700"></span>
-                  </div>
-                  <p className="text-sm text-gray-700 whitespace-pre-wrap">
-                    {previewContent}
-                  </p>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Nội dung template <span className="text-red-500">*</span>
+            </label>
+            <textarea
+              name="content"
+              required
+              rows={6}
+              value={formData.content}
+              onChange={handleInputChange}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              placeholder="Nhập nội dung template. Sử dụng các biến như xxx, yyy, sdt... Ví dụ: Xin chào xxx, chúc yyy một ngày tốt lành!"
+            />
+            
+            {/* Preview */}
+            {previewContent && (
+              <div className="mt-3 p-3 bg-gray-50 rounded-lg border">
+                <div className="flex items-center mb-2">
+                  <VariableIcon className="h-4 w-4 text-gray-500 mr-2" />
+                  <span className="text-sm font-medium text-gray-700">Preview:</span>
                 </div>
-              )}
-            </div>
+                <p className="text-sm text-gray-700 whitespace-pre-wrap">
+                  {previewContent}
+                </p>
+              </div>
+            )}
+          </div>
 
-            <div className="flex justify-end space-x-3 pt-4">
-              <button
-                type="button"
-                onClick={resetForm}
-                className="px-4 py-2 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
-              >
-                Hủy
-              </button>
-              <button
-                type="submit"
-                disabled={isLoading}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
-              >
-                {isLoading ? 'Đang xử lý...' : (editingTemplate ? 'Cập nhật' : 'Thêm mới')}
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
+          <div className="flex justify-end space-x-3 pt-4">
+            <button
+              type="button"
+              onClick={resetForm}
+              className="px-4 py-2 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
+            >
+              Hủy
+            </button>
+            <button
+              type="submit"
+              disabled={isLoading}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+            >
+              {isLoading ? 'Đang xử lý...' : (editingTemplate ? 'Cập nhật' : 'Thêm mới')}
+            </button>
+          </div>
+        </form>
+      </Modal>
 
       {/* Templates List */}
       <div className="bg-white rounded-2xl shadow-xl border border-gray-100 overflow-hidden">

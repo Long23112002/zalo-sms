@@ -19,9 +19,10 @@ interface ZaloConfig {
 interface ZaloConfigManagerProps {
   accessToken: string;
   onZaloLogin: (config: ZaloConfig) => void;
+  onQRLoginSuccess?: () => void; // Thêm callback để redirect khi QR login thành công
 }
 
-export default function ZaloConfigManager({ accessToken, onZaloLogin }: ZaloConfigManagerProps) {
+export default function ZaloConfigManager({ accessToken, onZaloLogin, onQRLoginSuccess }: ZaloConfigManagerProps) {
   const [configs, setConfigs] = useState<ZaloConfig[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [showForm, setShowForm] = useState(false);
@@ -245,48 +246,74 @@ export default function ZaloConfigManager({ accessToken, onZaloLogin }: ZaloConf
     }
   };
 
-  // Xử lý login vào Zalo
+  // Xử lý login vào Zalo với config có sẵn
   const handleZaloLogin = async (config: ZaloConfig) => {
     setLoginLoading(config._id);
     setError('');
     setSuccess('');
 
     try {
-      // Xử lý cookie format trước khi gửi
-      let cookieToSend: string;
-      try {
-        cookieToSend = processCookieFormat(config.cookie);
-      } catch (cookieError: any) {
-        setError(`Lỗi cookie: ${cookieError.message}`);
+      // Kiểm tra config có hợp lệ không
+      if (!config.cookie || !config.imei || !config.userAgent) {
+        setError('Config không đầy đủ thông tin (cookie, IMEI, User Agent)');
         setLoginLoading(null);
         return;
       }
 
-      const response = await fetch('/api/zalo/login', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          method: 'cookie',
-          cookie: cookieToSend,
-          imei: config.imei,
-          userAgent: config.userAgent,
-          proxy: config.proxy
-        })
+      // Kiểm tra config có active không
+      if (!config.isActive) {
+        setError('Config này không hoạt động. Vui lòng kích hoạt trước khi sử dụng.');
+        setLoginLoading(null);
+        return;
+      }
+
+      // Kiểm tra cookie có dữ liệu không
+      let cookieData = config.cookie;
+      if (Array.isArray(cookieData) && cookieData.length === 0) {
+        setError('Config này không có cookie hợp lệ. Vui lòng login QR lại.');
+        setLoginLoading(null);
+        return;
+      }
+      
+      if (typeof cookieData === 'string' && cookieData.trim() === '') {
+        setError('Config này không có cookie hợp lệ. Vui lòng login QR lại.');
+        setLoginLoading(null);
+        return;
+      }
+
+      // Xử lý cookie format để hiển thị
+      let cookieDisplay: string;
+      try {
+        cookieDisplay = getDisplayCookie(config.cookie);
+        console.log(`🍪 Cookie format cho config ${config.name}:`, cookieDisplay);
+      } catch (cookieError: any) {
+        console.warn(`⚠️ Cookie format warning: ${cookieError.message}`);
+        cookieDisplay = 'Cookie format không chuẩn';
+      }
+
+      // Log thông tin config
+      console.log(`🔍 Sử dụng config:`, {
+        name: config.name,
+        id: config._id,
+        cookieLength: typeof config.cookie === 'string' ? config.cookie.length : 'Array/Object',
+        imei: config.imei,
+        userAgent: config.userAgent,
+        isActive: config.isActive
       });
 
-      const data = await response.json();
-
-      if (response.ok) {
-        setSuccess(`Đăng nhập Zalo thành công với tài khoản: ${config.name}`);
+      // Thành công - gọi callback để chuyển sang tab gửi tin nhắn
+      setSuccess(`✅ Đã chọn config "${config.name}" để sử dụng. Chuyển sang tab gửi tin nhắn...`);
+      console.log(`✅ Login thành công với config: ${config.name}`);
+      
+      // Delay một chút để user thấy thông báo thành công
+      setTimeout(() => {
         // Gọi callback để chuyển sang tab gửi tin nhắn
         onZaloLogin(config);
-      } else {
-        setError(`Đăng nhập Zalo thất bại: ${data.error}`);
-      }
+      }, 1000);
+      
     } catch (error: any) {
-      setError('Không thể kết nối đến server Zalo');
+      console.error(`❌ Lỗi khi login với config ${config.name}:`, error);
+      setError(`Lỗi khi đăng nhập: ${error.message || 'Không xác định'}`);
     } finally {
       setLoginLoading(null);
     }
@@ -302,7 +329,10 @@ export default function ZaloConfigManager({ accessToken, onZaloLogin }: ZaloConf
     try {
       const res = await fetch('/api/zalo/login-qr', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${accessToken}` // Thêm Authorization header
+        },
         body: JSON.stringify({ userAgent: qrUserAgent })
       });
       const data = await res.json();
@@ -317,8 +347,12 @@ export default function ZaloConfigManager({ accessToken, onZaloLogin }: ZaloConf
           if (st.done) {
             clearInterval(qrTimer.current);
             if (st.ok) {
+              console.log('🎉 QR login thành công!');
+              console.log('📊 Session data:', st);
               setSuccess('Đăng nhập bằng QR thành công');
+              onQRLoginSuccess?.(); // Trigger redirect
             } else {
+              console.log('❌ QR login thất bại:', st.error);
               setError(st.error || 'Đăng nhập QR thất bại');
             }
             setQrOpen(false);
@@ -374,6 +408,7 @@ export default function ZaloConfigManager({ accessToken, onZaloLogin }: ZaloConf
           onClick={() => setActiveSubTab('config')}
           className={`px-3 py-2 rounded-lg ${activeSubTab==='config' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700'}`}
         >Cấu hình Cookie</button>
+
         <button
           onClick={() => setActiveSubTab('qr')}
           className={`px-3 py-2 rounded-lg ${activeSubTab==='qr' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700'}`}
@@ -397,138 +432,132 @@ export default function ZaloConfigManager({ accessToken, onZaloLogin }: ZaloConf
         </>
       )}
 
-      {activeSubTab === 'config' && showForm && (
-        <div className="mb-8 bg-white rounded-2xl shadow-xl p-6 border border-gray-100">
-          <div className="flex items-center justify-between mb-6">
-            <h2 className="text-xl font-semibold text-gray-900">
-              {editingConfig ? 'Chỉnh sửa cấu hình' : 'Thêm cấu hình mới'}
-            </h2>
-            <button
-              onClick={resetForm}
-              className="text-gray-400 hover:text-gray-600 transition-colors"
-            >
-              ✕
-            </button>
-          </div>
-
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Tên cấu hình <span className="text-red-500">*</span>
-                </label>
-                <input
-                  name="name"
-                  type="text"
-                  required
-                  value={formData.name}
-                  onChange={handleInputChange}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  placeholder="Ví dụ: Tài khoản chính"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  IMEI <span className="text-red-500">*</span>
-                </label>
-                <input
-                  name="imei"
-                  type="text"
-                  required
-                  value={formData.imei}
-                  onChange={handleInputChange}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  placeholder="Nhập IMEI thiết bị"
-                />
-              </div>
-            </div>
-
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <label className="block text-sm font-medium text-gray-700">
-                  Cookie <span className="text-red-500">*</span>
-                </label>
-                <div className="flex items-center space-x-2">
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept=".json"
-                    onChange={handleFileImport}
-                    className="hidden"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    className="inline-flex items-center px-2 py-1 text-xs bg-gray-100 text-gray-700 rounded hover:bg-gray-200 transition-colors"
-                  >
-                    <DocumentArrowUpIcon className="h-3 w-3 mr-1" />
-                    Import JSON
-                  </button>
-                </div>
-              </div>
-              <textarea
-                name="cookie"
-                required
-                rows={4}
-                value={formData.cookie}
-                onChange={handleInputChange}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono text-sm"
-                placeholder="Nhập cookie Zalo hoặc import từ file JSON"
-              />
-              <p className="text-xs text-gray-500 mt-1">
-                Cookie sẽ được tự động chuyển đổi sang định dạng phù hợp khi lưu
-              </p>
-            </div>
-
+      {/* Configuration Modal */}
+      <Modal
+        title={editingConfig ? 'Chỉnh sửa cấu hình' : 'Thêm cấu hình mới'}
+        open={showForm}
+        onCancel={resetForm}
+        footer={null}
+        width={700}
+        destroyOnClose
+      >
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                User Agent <span className="text-red-500">*</span>
-              </label>
-              <textarea
-                name="userAgent"
-                required
-                rows={2}
-                value={formData.userAgent}
-                onChange={handleInputChange}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                placeholder="Nhập User Agent"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Proxy (tùy chọn)
+                Tên cấu hình <span className="text-red-500">*</span>
               </label>
               <input
-                name="proxy"
+                name="name"
                 type="text"
-                value={formData.proxy}
+                required
+                value={formData.name}
                 onChange={handleInputChange}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                placeholder="http://username:password@proxy:port"
+                placeholder="Ví dụ: Tài khoản chính"
               />
             </div>
 
-            <div className="flex justify-end space-x-3 pt-4">
-              <button
-                type="button"
-                onClick={resetForm}
-                className="px-4 py-2 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
-              >
-                Hủy
-              </button>
-              <button
-                type="submit"
-                disabled={isLoading}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
-              >
-                {isLoading ? 'Đang xử lý...' : (editingConfig ? 'Cập nhật' : 'Thêm mới')}
-              </button>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                IMEI <span className="text-red-500">*</span>
+              </label>
+              <input
+                name="imei"
+                type="text"
+                required
+                value={formData.imei}
+                onChange={handleInputChange}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                placeholder="Nhập IMEI thiết bị"
+              />
             </div>
-          </form>
-        </div>
-      )}
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <label className="block text-sm font-medium text-gray-700">
+                Cookie <span className="text-red-500">*</span>
+              </label>
+              <div className="flex items-center space-x-2">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".json"
+                  onChange={handleFileImport}
+                  className="hidden"
+                />
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="inline-flex items-center px-2 py-1 text-xs bg-gray-100 text-gray-700 rounded hover:bg-gray-200 transition-colors"
+                >
+                  <DocumentArrowUpIcon className="h-3 w-3 mr-1" />
+                  Import JSON
+                </button>
+              </div>
+            </div>
+            <textarea
+              name="cookie"
+              required
+              rows={4}
+              value={formData.cookie}
+              onChange={handleInputChange}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono text-sm"
+              placeholder="Nhập cookie Zalo hoặc import từ file JSON"
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              Cookie sẽ được tự động chuyển đổi sang định dạng phù hợp khi lưu
+            </p>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              User Agent <span className="text-red-500">*</span>
+            </label>
+            <textarea
+              name="userAgent"
+              required
+              rows={2}
+              value={formData.userAgent}
+              onChange={handleInputChange}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              placeholder="Nhập User Agent"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Proxy (tùy chọn)
+            </label>
+            <input
+              name="proxy"
+              type="text"
+              value={formData.proxy}
+              onChange={handleInputChange}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              placeholder="http://username:password@proxy:port"
+            />
+          </div>
+
+          <div className="flex justify-end space-x-3 pt-4">
+            <button
+              type="button"
+              onClick={resetForm}
+              className="px-4 py-2 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
+            >
+              Hủy
+            </button>
+            <button
+              type="submit"
+              disabled={isLoading}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+            >
+              {isLoading ? 'Đang xử lý...' : (editingConfig ? 'Cập nhật' : 'Thêm mới')}
+            </button>
+          </div>
+        </form>
+      </Modal>
 
       {activeSubTab === 'config' && (
       <div className="bg-white rounded-2xl shadow-xl border border-gray-100 overflow-hidden">
@@ -596,17 +625,17 @@ export default function ZaloConfigManager({ accessToken, onZaloLogin }: ZaloConf
                       onClick={() => handleZaloLogin(config)}
                       disabled={loginLoading === config._id}
                       className="px-3 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 disabled:opacity-50 transition-colors flex items-center"
-                      title="Đăng nhập vào Zalo"
+                      title="Sử dụng config này để gửi tin nhắn"
                     >
                       {loginLoading === config._id ? (
                         <>
                           <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
-                          Đang login...
+                          Đang xử lý...
                         </>
                       ) : (
                         <>
                           <ArrowRightIcon className="h-4 w-4 mr-1" />
-                          Login
+                          Sử dụng
                         </>
                       )}
                     </button>
@@ -637,6 +666,8 @@ export default function ZaloConfigManager({ accessToken, onZaloLogin }: ZaloConf
       </div>
       )}
 
+
+
       {activeSubTab === 'qr' && (
         <div className="bg-white rounded-2xl shadow-xl border border-gray-100 overflow-hidden p-6">
           <h3 className="text-lg font-semibold text-gray-900 mb-4">Đăng nhập bằng QR</h3>
@@ -657,13 +688,13 @@ export default function ZaloConfigManager({ accessToken, onZaloLogin }: ZaloConf
                 >Tạo mã QR</button>
               </div>
             </div>
-            <div className="flex items-center justify-center">
+            {/* <div className="flex items-center justify-center">
               {qrSrc ? (
                 <img src={qrSrc} alt="QR" className="max-h-64 rounded-lg border" />
               ) : (
                 <div className="text-gray-500">Ảnh QR sẽ hiển thị tại đây</div>
               )}
-            </div>
+            </div> */}
           </div>
         </div>
       )}

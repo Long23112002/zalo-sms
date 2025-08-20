@@ -178,32 +178,97 @@ export async function DELETE(request: NextRequest) {
       
       const { searchParams } = new URL(request.url);
       const id = searchParams.get('id');
+      const phone = searchParams.get('phone');
+      const hardDelete = searchParams.get('hard') === 'true';
       
-      if (!id) {
+      if (!id && !phone) {
         return NextResponse.json(
-          { error: 'ID là bắt buộc' },
+          { error: 'ID hoặc số điện thoại là bắt buộc' },
           { status: 400 }
         );
       }
       
-      // Xóa user data (soft delete)
-      const userData = await UserData.findOneAndUpdate(
-        { _id: id, userId: req.user.userId },
-        { isActive: false },
-        { new: true }
-      );
-      
-      if (!userData) {
-        return NextResponse.json(
-          { error: 'Không tìm thấy dữ liệu' },
-          { status: 404 }
-        );
+      if (phone) {
+        // Xóa theo số điện thoại (thường dùng khi gửi tin nhắn thành công)
+        if (hardDelete) {
+          // Hard delete - xóa hoàn toàn khỏi database
+          const userData = await UserData.findOneAndDelete(
+            { phone, userId: req.user.userId }
+          );
+          
+          if (!userData) {
+            return NextResponse.json(
+              { error: 'Không tìm thấy dữ liệu với số điện thoại này' },
+              { status: 404 }
+            );
+          }
+          
+          return NextResponse.json({
+            success: true,
+            message: 'Đã xóa hoàn toàn khỏi database',
+            deletedPhone: phone
+          });
+        } else {
+          // Soft delete - đặt isActive = false
+          const userData = await UserData.findOneAndUpdate(
+            { phone, userId: req.user.userId },
+            { isActive: false },
+            { new: true }
+          );
+          
+          if (!userData) {
+            return NextResponse.json(
+              { error: 'Không tìm thấy dữ liệu với số điện thoại này' },
+              { status: 404 }
+            );
+          }
+          
+          return NextResponse.json({
+            success: true,
+            message: 'Xóa thành công',
+            deletedPhone: phone
+          });
+        }
+      } else if (id) {
+        // Xóa theo ID (giữ nguyên logic cũ)
+        if (hardDelete) {
+          // Hard delete - xóa hoàn toàn khỏi database
+          const userData = await UserData.findOneAndDelete(
+            { _id: id, userId: req.user.userId }
+          );
+          
+          if (!userData) {
+            return NextResponse.json(
+              { error: 'Không tìm thấy dữ liệu' },
+              { status: 404 }
+            );
+          }
+          
+          return NextResponse.json({
+            success: true,
+            message: 'Đã xóa hoàn toàn khỏi database'
+          });
+        } else {
+          // Soft delete - đặt isActive = false (mặc định)
+          const userData = await UserData.findOneAndUpdate(
+            { _id: id, userId: req.user.userId },
+            { isActive: false },
+            { new: true }
+          );
+          
+          if (!userData) {
+            return NextResponse.json(
+              { error: 'Không tìm thấy dữ liệu' },
+              { status: 404 }
+            );
+          }
+          
+          return NextResponse.json({
+            success: true,
+            message: 'Xóa thành công'
+          });
+        }
       }
-      
-      return NextResponse.json({
-        success: true,
-        message: 'Xóa thành công'
-      });
       
     } catch (error: any) {
       console.error('Delete user data error:', error);
