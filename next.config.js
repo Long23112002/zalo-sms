@@ -8,12 +8,15 @@ const nextConfig = {
     }
 
     // Fallback cho các module Node.js
-    config.resolve.fallback = {
-      ...config.resolve.fallback,
-      fs: false,
-      path: false,
-      os: false,
-    };
+    // Chỉ áp dụng cho client-side, không áp dụng cho server-side
+    if (!isServer) {
+      config.resolve.fallback = {
+        ...config.resolve.fallback,
+        fs: false,
+        path: false,
+        os: false,
+      };
+    }
 
     return config;
   }

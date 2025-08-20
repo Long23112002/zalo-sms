@@ -6,6 +6,7 @@ import path from 'path';
 import { join } from 'path';
 import fs from 'node:fs/promises'
 import fsSync from 'node:fs'
+import os from 'os'
 import { loginQR } from '@/base/loginQR'
 import { CookieJar } from 'tough-cookie'
 
@@ -73,18 +74,43 @@ const logger = {
 // In-memory session store for dev/self-host
 const sessions = new Map<string, QRLoginSession>()
 
-// Function để tạo thư mục tmp (chỉ cần thiết cho QR code)
+// Function để tạo thư mục tạm thời cho QR code
+// Trên Vercel, sử dụng /tmp (thư mục tạm thời của serverless function)
+// Trên development, sử dụng thư mục tmp local
 async function ensureTmpDir(): Promise<string> {
-  const dir = path.join(process.cwd(), 'tmp')
-  await fs.mkdir(dir, { recursive: true })
-  return dir
+  if (process.env.NODE_ENV === 'production') {
+    // Trên production (Vercel), sử dụng /tmp
+    // Đây là thư mục tạm thời duy nhất có thể ghi được trên Vercel
+    return '/tmp';
+  } else {
+    // Trên development, sử dụng thư mục tmp local
+    const dir = path.join(process.cwd(), 'tmp')
+    try {
+      await fs.mkdir(dir, { recursive: true })
+    } catch (error) {
+      // Nếu không thể tạo thư mục, sử dụng thư mục tạm thời của hệ thống
+      return os.tmpdir();
+    }
+    return dir
+  }
 }
 
 function saveBase64Image(base64String: string, outputPath: string): void {
   const matches = base64String.match(/^data:(image\/\w+);base64,(.+)$/)
   let base64Data = base64String
   if (matches) base64Data = matches[2]
-  fsSync.mkdirSync(path.dirname(outputPath), { recursive: true })
+  
+  // Đảm bảo thư mục tồn tại trước khi ghi file
+  try {
+    const dir = path.dirname(outputPath);
+    if (dir && dir !== '.') {
+      fsSync.mkdirSync(dir, { recursive: true });
+    }
+  } catch (error) {
+    // Nếu không thể tạo thư mục, ghi file trực tiếp (có thể gây lỗi)
+    console.warn('Warning: Could not create directory for QR image');
+  }
+  
   fsSync.writeFileSync(outputPath, Buffer.from(base64Data, 'base64'))
 }
 
@@ -133,7 +159,17 @@ function toCookieString(cookieInput: any): string {
 }
 
 const getJsonData = (filePath: string, defaultData: any = {}): any => {
-  fsSync.mkdirSync(path.dirname(filePath), { recursive: true })
+  // Đảm bảo thư mục tồn tại trước khi ghi file
+  try {
+    const dir = path.dirname(filePath);
+    if (dir && dir !== '.') {
+      fsSync.mkdirSync(dir, { recursive: true });
+    }
+  } catch (error) {
+    // Nếu không thể tạo thư mục, ghi file trực tiếp (có thể gây lỗi)
+    console.warn('Warning: Could not create directory for JSON file');
+  }
+  
   if (!fsSync.existsSync(filePath)) {
     logger.log(`File ${path.basename(filePath)} chưa tồn tại, tạo mới.`, 'warn')
     fsSync.writeFileSync(filePath, JSON.stringify(defaultData, null, 2), 'utf8')
@@ -178,9 +214,26 @@ export async function POST(request: NextRequest) {
     const zcaConfig = body?.zcaConfig || body?.zca_js_config || body?.config || {}
 
     sessionId = (globalThis.crypto as any)?.randomUUID?.() || `${Date.now()}-${Math.random()}`
-    const dir = await ensureTmpDir()
-   const qrFileName = `qr_${sessionId}.png`;
-const qrPath = join(dir, qrFileName);
+    
+    // Tạo thư mục tạm thời cho QR code
+    let dir: string;
+    let qrPath: string;
+    try {
+      dir = await ensureTmpDir();
+      const qrFileName = `qr_${sessionId}.png`;
+      qrPath = join(dir, qrFileName);
+      logger.log(`📁 Sử dụng thư mục tạm thời: ${dir}`, 'info');
+    } catch (error) {
+      logger.log(`❌ Không thể tạo thư mục tạm thời: ${error}`, 'error');
+      // Fallback: sử dụng thư mục hiện tại
+      dir = '.';
+      const qrFileName = `qr_${sessionId}.png`;
+      qrPath = qrFileName;
+      logger.log(`⚠️ Fallback: sử dụng thư mục hiện tại`, 'warn');
+    }
+    
+    // Lưu ý: Trên Vercel, nếu không thể tạo file QR, ứng dụng vẫn hoạt động
+    // nhưng QR code sẽ không được lưu trữ. Điều này không ảnh hưởng đến chức năng login.
 
     // Run in background
     (async () => {

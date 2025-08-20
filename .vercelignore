@@ -1,0 +1,43 @@
+# Loại trừ thư mục tmp khỏi deployment
+tmp/
+tmp/*
+
+# Loại trừ các file development
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Loại trừ các file log
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Loại trừ các file cache
+.next/
+node_modules/
+.cache/
+
+# Loại trừ các file tạm thời
+*.tmp
+*.temp
+
+# Loại trừ các file backup
+*.bak
+*.backup
+
+# Loại trừ các file test
+coverage/
+.nyc_output/
+
+# Loại trừ các file IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Loại trừ các file OS
+.DS_Store
+Thumbs.db
