@@ -6,6 +6,8 @@ import ZaloConfigManager from '@/components/ZaloConfigManager';
 import TemplateManager from '@/components/TemplateManager';
 import MessageForm from '@/components/MessageForm';
 import ResultDisplay from '@/components/ResultDisplay';
+import ImageProcessor from '@/components/ImageProcessor';
+import { decodeToken } from '@/utils/jwt';
 
 interface ZaloConfig {
   _id: string;
@@ -51,7 +53,8 @@ export default function Home() {
   const [accessToken, setAccessToken] = useState<string>('');
   const [refreshToken, setRefreshToken] = useState<string>('');
   const [mounted, setMounted] = useState(false);
-  const [activeTab, setActiveTab] = useState<'config' | 'template' | 'message'>('config');
+  const [userRole, setUserRole] = useState<string>('');
+  const [activeTab, setActiveTab] = useState<'config' | 'template' | 'message' | 'image'>('config');
   const [activeZaloConfig, setActiveZaloConfig] = useState<ZaloConfig | null>(null);
   const [messageResults, setMessageResults] = useState<MessageResult[]>([]);
   const [showQRSuccess, setShowQRSuccess] = useState(false); // Thêm state để hiển thị thông báo QR success
@@ -66,19 +69,52 @@ export default function Home() {
     if (storedAccessToken && storedRefreshToken) {
       setAccessToken(storedAccessToken);
       setRefreshToken(storedRefreshToken);
+      
+      // Decode token để lấy user role
+      try {
+        const decodedToken = decodeToken(storedAccessToken);
+        if (decodedToken && decodedToken.role) {
+          console.log('🔑 User role from token:', decodedToken.role);
+          setUserRole(decodedToken.role);
+        }
+      } catch (error) {
+        console.error('Error decoding token:', error);
+      }
     }
   }, []);
+  
+  // Chuyển tab về 'config' nếu user không phải admin và đang ở tab 'image'
+  useEffect(() => {
+    if (userRole && userRole !== 'admin' && activeTab === 'image') {
+      console.log('🚫 User không phải admin, chuyển từ tab image về config');
+      setActiveTab('config');
+    }
+  }, [userRole, activeTab]);
+  
+
 
   const handleAuthSuccess = (data: { user: any; tokens: any }) => {
     setAccessToken(data.tokens.accessToken);
     setRefreshToken(data.tokens.refreshToken);
     localStorage.setItem('accessToken', data.tokens.accessToken);
     localStorage.setItem('refreshToken', data.tokens.refreshToken);
+    
+    // Decode token để lấy user role
+    try {
+      const decodedToken = decodeToken(data.tokens.accessToken);
+      if (decodedToken && decodedToken.role) {
+        console.log('🔑 User role from auth success:', decodedToken.role);
+        setUserRole(decodedToken.role);
+      }
+    } catch (error) {
+      console.error('Error decoding token:', error);
+    }
   };
 
   const handleLogout = () => {
     setAccessToken('');
     setRefreshToken('');
+    setUserRole('');
     setActiveZaloConfig(null);
     setMessageResults([]);
     localStorage.removeItem('accessToken');
@@ -295,7 +331,9 @@ export default function Home() {
       <header className="bg-white shadow-sm border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
-            <h1 className="text-2xl font-bold text-gray-900">Zalo SMS</h1>
+            <div className="flex items-center space-x-4">
+              <h1 className="text-2xl font-bold text-gray-900">Zalo SMS</h1>
+            </div>
             <button
               onClick={handleLogout}
               className="px-4 py-2 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
@@ -334,7 +372,7 @@ export default function Home() {
               onClick={() => setActiveTab('message')}
               disabled={!activeZaloConfig}
               className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors ${
-                activeTab === 'config'
+                activeTab === 'message'
                   ? 'border-blue-500 text-blue-600'
                   : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
               } ${!activeZaloConfig ? 'opacity-50 cursor-not-allowed' : ''}`}
@@ -346,6 +384,18 @@ export default function Home() {
                 </span>
               )}
             </button>
+            {userRole === 'admin' && (
+              <button
+                onClick={() => setActiveTab('image')}
+                className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors ${
+                  activeTab === 'image'
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                Xử lý ảnh
+              </button>
+            )}
           </div>
         </div>
       </nav>
@@ -588,6 +638,12 @@ export default function Home() {
                 </div>
               </div>
             )}
+          </div>
+        )}
+        
+        {activeTab === 'image' && userRole === 'admin' && (
+          <div className="tab-transition">
+            <ImageProcessor />
           </div>
         )}
       </main>
